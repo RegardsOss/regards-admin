@@ -23,7 +23,7 @@
 
 	<groupId>fr.cnes.regards.microservices.administration</groupId>
 	<artifactId>remote-tenant-resolver</artifactId>
-	<version>3.0.0-RELEASE</version>
+	<version>3.1.0-RC</version>
 	<packaging>jar</packaging>
 
 	<name>Remote Tenant Resolver</name>
@@ -52,7 +52,7 @@
 	<parent>
 		<groupId>fr.cnes.regards</groupId>
 		<artifactId>regards-parent</artifactId>
-		<version>3.0.0-RELEASE</version>
+		<version>3.1.0-RC</version>
 		<relativePath></relativePath>
 	</parent>
 
