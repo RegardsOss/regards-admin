@@ -27,12 +27,15 @@ import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 
 import fr.cnes.regards.framework.authentication.IAuthenticationResolver;
@@ -46,6 +49,7 @@ import fr.cnes.regards.modules.accessrights.domain.projects.Role;
 import fr.cnes.regards.modules.accessrights.service.projectuser.IProjectUserService;
 import fr.cnes.regards.modules.accessrights.service.role.IRoleService;
 import fr.cnes.regards.modules.notification.dao.INotificationRepository;
+import fr.cnes.regards.modules.notification.domain.INotificationWithoutMessage;
 import fr.cnes.regards.modules.notification.domain.Notification;
 import fr.cnes.regards.modules.notification.domain.NotificationMode;
 import fr.cnes.regards.modules.notification.domain.NotificationStatus;
@@ -84,6 +88,9 @@ public class NotificationService implements INotificationService {
     private final NotificationMode notificationMode;
 
     private final IAuthenticationResolver authenticationResolver;
+
+    @Autowired
+    private INotificationService self;
 
     /**
      * Creates a {@link NotificationService} wired to the given {@link INotificationRepository}.
@@ -130,12 +137,12 @@ public class NotificationService implements INotificationService {
     }
 
     @Override
-    public Page<Notification> retrieveNotifications(Pageable page) {
+    public Page<INotificationWithoutMessage> retrieveNotifications(Pageable page) {
         if (notificationMode == NotificationMode.MULTITENANT) {
             return notificationRepository.findByRecipientsContaining(authenticationResolver.getUser(),
                                                                      authenticationResolver.getRole(), page);
         } else {
-            return notificationRepository.findAll(page);
+            return notificationRepository.findAllNotificationsWithoutMessage(page);
         }
     }
 
@@ -224,15 +231,14 @@ public class NotificationService implements INotificationService {
     }
 
     @Override
-    public Page<Notification> retrieveNotifications(Pageable page, NotificationStatus state)
-            throws EntityNotFoundException {
+    public Page<INotificationWithoutMessage> retrieveNotifications(Pageable page, NotificationStatus state) {
         if (state != null) {
             if (notificationMode == NotificationMode.MULTITENANT) {
                 return notificationRepository
                         .findByStatusAndRecipientsContaining(state, authenticationResolver.getUser(),
                                                              authenticationResolver.getRole(), page);
             } else {
-                return notificationRepository.findByStatus(state, page);
+                return notificationRepository.findAllNotificationsWithoutMessageByStatus(state, page);
             }
         } else {
             return retrieveNotifications(page);
@@ -263,5 +269,25 @@ public class NotificationService implements INotificationService {
         } else {
             return notificationRepository.countByStatus(NotificationStatus.READ);
         }
+    }
+
+    @Override
+    public void deleteReadNotifications() {
+        Pageable page = PageRequest.of(0, 100);
+        Page<INotificationWithoutMessage> results;
+        do {
+            // Do delete in one unique transaction, to do so use the self element
+            results = self.deleteReadNotificationsPage(page);
+        } while (results.hasNext());
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Page<INotificationWithoutMessage> deleteReadNotificationsPage(Pageable page) {
+        Page<INotificationWithoutMessage> results = this.retrieveNotifications(page, NotificationStatus.READ);
+        Set<Long> idsToDelete = results.getContent().stream().map(INotificationWithoutMessage::getId)
+                .collect(Collectors.toSet());
+        notificationRepository.deleteByIdIn(idsToDelete);
+        return results;
     }
 }

@@ -26,6 +26,7 @@ import org.springframework.data.domain.Pageable;
 
 import fr.cnes.regards.framework.module.rest.exception.EntityNotFoundException;
 import fr.cnes.regards.framework.notification.NotificationDTO;
+import fr.cnes.regards.modules.notification.domain.INotificationWithoutMessage;
 import fr.cnes.regards.modules.notification.domain.Notification;
 import fr.cnes.regards.modules.notification.domain.NotificationStatus;
 
@@ -43,7 +44,7 @@ public interface INotificationService {
      * @throws EntityNotFoundException
      *             thrown when no current user could be found
      */
-    Page<Notification> retrieveNotifications(Pageable page) throws EntityNotFoundException;
+    Page<INotificationWithoutMessage> retrieveNotifications(Pageable page) throws EntityNotFoundException;
 
     /**
      * Save a new notification in db for later sending by a scheluder.
@@ -65,6 +66,12 @@ public interface INotificationService {
      *             Thrown when no notification with passed <code>id</code> could be found
      */
     Notification retrieveNotification(Long pId) throws EntityNotFoundException;
+
+    /**
+     * Retrieve notifications for the given status
+     * @param state {@link NotificationStatus}
+     */
+    Page<INotificationWithoutMessage> retrieveNotifications(Pageable page, NotificationStatus state);
 
     /**
      * Update the {@link Notification#status}
@@ -111,21 +118,21 @@ public interface INotificationService {
     Set<String> findRecipients(Notification pNotification);
 
     /**
-     * Retrieve notifications for the given status
-     * @param state {@link NotificationStatus}
-     * @throws EntityNotFoundException
-     */
-    Page<Notification> retrieveNotifications(Pageable page, NotificationStatus state) throws EntityNotFoundException;
-
-    /**
-     * Counter number of unread notifications for current used
+     * Counter number of unread notifications for current user
      * @return long
      */
     Long countUnreadNotifications();
 
     /**
-     * Counter number of read notifications for current used
+     * Counter number of read notifications for current user
      * @return long
      */
     Long countReadNotifications();
+
+    /**
+     * Delete read notifications for current user
+     */
+    void deleteReadNotifications();
+
+    Page<INotificationWithoutMessage> deleteReadNotificationsPage(Pageable page);
 }

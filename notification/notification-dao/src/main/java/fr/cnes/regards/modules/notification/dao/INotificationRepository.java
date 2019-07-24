@@ -18,6 +18,7 @@
  */
 package fr.cnes.regards.modules.notification.dao;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -31,7 +32,9 @@ import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.PagingAndSortingRepository;
+import org.springframework.data.repository.query.Param;
 
+import fr.cnes.regards.modules.notification.domain.INotificationWithoutMessage;
 import fr.cnes.regards.modules.notification.domain.Notification;
 import fr.cnes.regards.modules.notification.domain.NotificationStatus;
 
@@ -50,17 +53,30 @@ public interface INotificationRepository
      * @param role The required role recipient
      * @return The list of found notifications
      */
-    default Page<Notification> findByRecipientsContaining(String projectUser, String role, Pageable pageable) {
+    default Page<INotificationWithoutMessage> findByRecipientsContaining(String projectUser, String role,
+            Pageable pageable) {
+
         return findByProjectUserRecipientsContainingOrRoleRecipientsContaining(projectUser, role, pageable);
     }
 
     @EntityGraph(attributePaths = { "projectUserRecipients", "roleRecipients" })
-    Page<Notification> findByProjectUserRecipientsContainingOrRoleRecipientsContaining(String projectUser, String role,
-            Pageable pageable);
+    Page<INotificationWithoutMessage> findByProjectUserRecipientsContainingOrRoleRecipientsContaining(
+            String projectUser, String role, Pageable pageable);
 
     @Override
     @EntityGraph(attributePaths = { "projectUserRecipients", "roleRecipients" })
     Optional<Notification> findById(Long id);
+
+    default Page<INotificationWithoutMessage> findAllNotificationsWithoutMessage(Pageable pageable) {
+        Page<Long> pageNotifications = findAllId(pageable);
+
+        List<INotificationWithoutMessage> notifs = findAllByIdInOrderByIdDesc(pageNotifications.getContent());
+
+        return new PageImpl<>(notifs, pageable, pageNotifications.getTotalElements());
+    }
+
+    @Query(value = "select distinct n.id from Notification n" + " ORDER BY id DESC")
+    Page<Long> findAllId(Pageable page);
 
     /**
      * Find all notifications having the passed project user or the passed role as recipient.
@@ -68,8 +84,8 @@ public interface INotificationRepository
      * @param role The required role recipient
      * @return The list of found notifications
      */
-    default Page<Notification> findByStatusAndRecipientsContaining(NotificationStatus status, String projectUser,
-            String role, Pageable pageable) {
+    default Page<INotificationWithoutMessage> findByStatusAndRecipientsContaining(NotificationStatus status,
+            String projectUser, String role, Pageable pageable) {
         // handling pagination by hand here is a bit touchy as we have conditions on joined tables
         // first lets get all notification ids that respect our wishes
         List<Long> allNotifIds = findAllIdByStatusAndRecipientsContainingSortedByIdDesc(status, projectUser, role);
@@ -84,13 +100,13 @@ public interface INotificationRepository
             pageIds = allNotifIds.subList(from, nbNotifs);
         }
         // now let get all the notif according to extracted ids
-        List<Notification> notifs = findAllByIdInOrderByIdDesc(pageIds);
+        List<INotificationWithoutMessage> notifs = findAllByIdInOrderByIdDesc(pageIds);
         // eventually, reconstruct a page
         return new PageImpl<>(notifs, pageable, nbNotifs);
     }
 
     @EntityGraph(attributePaths = { "projectUserRecipients", "roleRecipients" })
-    List<Notification> findAllByIdInOrderByIdDesc(List<Long> pageIds);
+    List<INotificationWithoutMessage> findAllByIdInOrderByIdDesc(List<Long> pageIds);
 
     @Query(value = "select distinct n.id from Notification n"
             + " where n.status= ?1 and (?2 member of n.projectUserRecipients or "
@@ -103,6 +119,16 @@ public interface INotificationRepository
             + " ?3 member of n.roleRecipients) GROUP BY id ORDER BY id DESC")
     Long countByStatus(NotificationStatus status, String projectUser, String role);
 
+    @Modifying
+    @Query("delete from Notification n where (:role member of n.roleRecipients)  AND n.status = :status")
+    void deleteByStatusAndRoleRecipientsInAndProjectUserRecipientsIsNull(@Param("status") NotificationStatus status,
+            @Param("role") String role);
+
+    @Modifying
+    @Query("delete from Notification n where (:user member of n.projectUserRecipients)  AND n.status = :status")
+    void deleteByStatusAndProjectUserRecipientsIn(@Param("status") NotificationStatus status,
+            @Param("user") String user);
+
     /**
      * Find all notifications with passed <code>status</code>
      * @param pStatus The notification status
@@ -111,19 +137,24 @@ public interface INotificationRepository
     @EntityGraph(attributePaths = { "projectUserRecipients", "roleRecipients" })
     Page<Notification> findByStatus(NotificationStatus pStatus, Pageable page);
 
+    /**
+     * Find all notifications without message with passed <code>status</code>
+     * @param status The notification status
+     * @return The list of notifications
+     */
+    default Page<INotificationWithoutMessage> findAllNotificationsWithoutMessageByStatus(NotificationStatus status,
+            Pageable pageable) {
+        Page<Long> pageNotifications = findPageIdByStatus(status, pageable);
+
+        List<INotificationWithoutMessage> notifs = findAllByIdInOrderByIdDesc(pageNotifications.getContent());
+
+        return new PageImpl<>(notifs, pageable, pageNotifications.getTotalElements());
+    }
+
+    @Query(value = "select distinct n.id from Notification n" + " where n.status = :status" + " order by id desc")
+    Page<Long> findPageIdByStatus(@Param("status") NotificationStatus status, Pageable pageable);
+
     Long countByStatus(NotificationStatus pStatus);
-
-    /**
-     * Find all notifications which recipients contains the given user, represented by its email
-     * @return all notifications which recipients contains the given user, represented by its email
-     */
-    Page<Notification> findAllByProjectUserRecipientsContaining(String email, Pageable page);
-
-    /**
-     * Find all notifications which recipients contains the given role, represented by its name
-     * @return all notifications which recipients contains the given role, represented by its name
-     */
-    Page<Notification> findAllByRoleRecipientsContaining(String role, Pageable page);
 
     @Modifying
     @Query(value = "UPDATE {h-schema}t_notification set status = ?1 FROM {h-schema}ta_notification_role_name recipient "
@@ -135,4 +166,6 @@ public interface INotificationRepository
             + "recipient WHERE t_notification.id = recipient.notification_id AND recipient.projectuser_email = ?2",
             nativeQuery = true)
     void updateAllNotificationStatusByUser(String status, String projectUser);
+
+    void deleteByIdIn(Collection<Long> idsToDelete);
 }

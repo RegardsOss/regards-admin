@@ -25,12 +25,14 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationListener;
+import org.springframework.context.annotation.Profile;
 import org.springframework.hateoas.Resource;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.UriUtils;
 
 import feign.FeignException;
+import fr.cnes.regards.framework.feign.security.FeignSecurityManager;
 import fr.cnes.regards.framework.module.rest.exception.EntityNotFoundException;
 import fr.cnes.regards.modules.accessrights.domain.emailverification.EmailVerificationToken;
 import fr.cnes.regards.modules.accessrights.domain.projects.ProjectUser;
@@ -46,6 +48,7 @@ import freemarker.template.TemplateException;
  * Listen to {@link OnGrantAccessEvent} in order to warn the user its account request was refused.
  * @author Xavier-Alexandre Brochard
  */
+@Profile("!nomail")
 @Component
 public class SendVerificationEmailListener implements ApplicationListener<OnGrantAccessEvent> {
 
@@ -92,6 +95,7 @@ public class SendVerificationEmailListener implements ApplicationListener<OnGran
         Map<String, String> data = new HashMap<>();
         // lets retrive the account
         try {
+            FeignSecurityManager.asSystem();
             ResponseEntity<Resource<Account>> accountResponse = accountsClient
                     .retrieveAccounByEmail(projectUser.getEmail());
             if (accountResponse.getStatusCode().is2xxSuccessful()) {
@@ -103,6 +107,8 @@ public class SendVerificationEmailListener implements ApplicationListener<OnGran
         } catch (FeignException e) {
             LOGGER.error("Could not find the associated Account for templating the email content.", e);
             data.put("name", "");
+        } finally {
+            FeignSecurityManager.reset();
         }
 
         String linkUrlTemplate;
@@ -111,11 +117,9 @@ public class SendVerificationEmailListener implements ApplicationListener<OnGran
         } else {
             linkUrlTemplate = "%s?origin_url=%s&token=%s&account_email=%s";
         }
-        String confirmationUrl = String.format(linkUrlTemplate,
-                                               token.getRequestLink(),
+        String confirmationUrl = String.format(linkUrlTemplate, token.getRequestLink(),
                                                UriUtils.encode(token.getOriginUrl(), StandardCharsets.UTF_8.name()),
-                                               token.getToken(),
-                                               userEmail);
+                                               token.getToken(), userEmail);
         data.put("confirmationUrl", confirmationUrl);
 
         String message;
