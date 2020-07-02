@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2019 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
+ * Copyright 2017-2020 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
  *
  * This file is part of REGARDS.
  *
@@ -59,7 +59,7 @@ public class Project implements IIdentifiable<Long> {
      * Project name
      */
     @NotNull
-    @Pattern(regexp = "[a-zA-Z0-9-_]*", message = "Valid caracters for project name are 'a-z','A-Z','0-9','-' and '_'")
+    @Pattern(regexp = "[a-zA-Z0-9-_]*", message = "Valid characters for project name are 'a-z','A-Z','0-9','-' and '_'")
     @Column(name = "name", length = 30)
     private String name;
 
