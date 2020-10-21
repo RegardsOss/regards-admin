@@ -579,6 +579,23 @@ public class RoleService implements IRoleService {
     }
 
     @Override
+    public boolean isCurrentRoleSuperiorTo(String roleName) throws EntityNotFoundException {
+        String securityRole = authResolver.getRole();
+
+        Role providedRole;
+        Role currentRole;
+        try {
+            providedRole = retrieveRole(roleName);
+            currentRole = retrieveRole(securityRole);
+            return isHierarchicallyInferior(providedRole, currentRole);
+        } catch (EntityNotFoundException e) {
+            LOGGER.error("Failed to compare the current role {} with {}, as one of them does not exist", securityRole,
+                         roleName, e);
+            throw e;
+        }
+    }
+
+    @Override
     public boolean existRole(Long roleId) {
         return roleRepository.existsById(roleId);
     }

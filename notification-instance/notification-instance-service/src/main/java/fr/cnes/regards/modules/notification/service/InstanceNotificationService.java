@@ -20,18 +20,23 @@ package fr.cnes.regards.modules.notification.service;
 
 import java.time.OffsetDateTime;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
-import fr.cnes.regards.modules.notification.domain.INotificationWithoutMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 
 import com.google.common.collect.Sets;
+
 import fr.cnes.regards.framework.authentication.IAuthenticationResolver;
 import fr.cnes.regards.framework.jpa.utils.RegardsTransactional;
 import fr.cnes.regards.framework.module.rest.exception.EntityNotFoundException;
@@ -39,6 +44,7 @@ import fr.cnes.regards.framework.notification.NotificationDTO;
 import fr.cnes.regards.framework.notification.NotificationLevel;
 import fr.cnes.regards.framework.security.role.DefaultRole;
 import fr.cnes.regards.modules.notification.dao.INotificationRepository;
+import fr.cnes.regards.modules.notification.domain.INotificationWithoutMessage;
 import fr.cnes.regards.modules.notification.domain.Notification;
 import fr.cnes.regards.modules.notification.domain.NotificationStatus;
 import fr.cnes.regards.modules.notification.domain.NotificationToSendEvent;
@@ -53,10 +59,8 @@ import fr.cnes.regards.modules.notification.domain.NotificationToSendEvent;
 @RegardsTransactional
 public class InstanceNotificationService implements IInstanceNotificationService {
 
-    /**
-     * Class logger
-     */
-    private static final Logger LOG = LoggerFactory.getLogger(InstanceNotificationService.class);
+    @SuppressWarnings("unused")
+    private static final Logger LOGGER = LoggerFactory.getLogger(InstanceNotificationService.class);
 
     /**
      * CRUD repository managing notifications. Autowired by Spring.
@@ -73,6 +77,9 @@ public class InstanceNotificationService implements IInstanceNotificationService
     @Autowired
     private IAuthenticationResolver authenticationResolver;
 
+    @Autowired
+    private IInstanceNotificationService self;
+
     @Override
     public Notification createNotification(NotificationDTO dto) {
         Notification notification = new Notification();
@@ -88,7 +95,8 @@ public class InstanceNotificationService implements IInstanceNotificationService
         notification.setRoleRecipients(Sets.newHashSet(DefaultRole.INSTANCE_ADMIN.toString()));
 
         // check the notification type and send it immediately if FATAL or ERROR
-        if (notification.getLevel() == NotificationLevel.FATAL || notification.getLevel() == NotificationLevel.ERROR) {
+        if ((notification.getLevel() == NotificationLevel.FATAL)
+                || (notification.getLevel() == NotificationLevel.ERROR)) {
             applicationEventPublisher.publishEvent(new NotificationToSendEvent(notification));
         }
 
@@ -131,6 +139,26 @@ public class InstanceNotificationService implements IInstanceNotificationService
     }
 
     @Override
+    public void deleteReadNotifications() {
+        Pageable page = PageRequest.of(0, 100);
+        Page<INotificationWithoutMessage> results;
+        do {
+            // Do delete in one unique transaction, to do so use the self element
+            results = self.deleteReadNotificationsPage(page);
+        } while (results.hasNext());
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Page<INotificationWithoutMessage> deleteReadNotificationsPage(Pageable page) {
+        Page<INotificationWithoutMessage> results = this.retrieveNotifications(page, NotificationStatus.READ);
+        Set<Long> idsToDelete = results.getContent().stream().map(INotificationWithoutMessage::getId)
+                .collect(Collectors.toSet());
+        notificationRepository.deleteByIdIn(idsToDelete);
+        return results;
+    }
+
+    @Override
     public void deleteNotification(Long pId) throws EntityNotFoundException {
         if (!notificationRepository.existsById(pId)) {
             throw new EntityNotFoundException(pId.toString(), Notification.class);
@@ -144,8 +172,7 @@ public class InstanceNotificationService implements IInstanceNotificationService
     }
 
     @Override
-    public Page<INotificationWithoutMessage> retrieveNotifications(Pageable page, NotificationStatus state)
-            throws EntityNotFoundException {
+    public Page<INotificationWithoutMessage> retrieveNotifications(Pageable page, NotificationStatus state) {
         if (state != null) {
             return notificationRepository.findAllNotificationsWithoutMessageByStatus(state, page);
         } else {
