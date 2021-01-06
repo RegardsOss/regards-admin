@@ -21,9 +21,11 @@ package fr.cnes.regards.modules.accessrights.service.projectuser.workflow.listen
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationListener;
 import org.springframework.context.annotation.Profile;
 import org.springframework.hateoas.EntityModel;
@@ -34,6 +36,7 @@ import org.springframework.web.util.UriUtils;
 import feign.FeignException;
 import fr.cnes.regards.framework.feign.security.FeignSecurityManager;
 import fr.cnes.regards.framework.module.rest.exception.EntityNotFoundException;
+import fr.cnes.regards.framework.multitenant.IRuntimeTenantResolver;
 import fr.cnes.regards.modules.accessrights.domain.emailverification.EmailVerificationToken;
 import fr.cnes.regards.modules.accessrights.domain.projects.ProjectUser;
 import fr.cnes.regards.modules.accessrights.instance.client.IAccountsClient;
@@ -41,6 +44,8 @@ import fr.cnes.regards.modules.accessrights.instance.domain.Account;
 import fr.cnes.regards.modules.accessrights.service.projectuser.emailverification.IEmailVerificationTokenService;
 import fr.cnes.regards.modules.accessrights.service.projectuser.workflow.events.OnGrantAccessEvent;
 import fr.cnes.regards.modules.emails.service.IEmailService;
+import fr.cnes.regards.modules.storage.client.IStorageRestClient;
+import fr.cnes.regards.modules.storage.domain.dto.quota.DownloadQuotaLimitsDto;
 import fr.cnes.regards.modules.templates.service.ITemplateService;
 import freemarker.template.TemplateException;
 
@@ -60,18 +65,30 @@ public class SendVerificationEmailListener implements ApplicationListener<OnGran
 
     private final IAccountsClient accountsClient;
 
+    private final IStorageRestClient storageClient;
+
+    private final IRuntimeTenantResolver runtimeTenantResolver;
+
+    private final String noreply;
+
     /**
      * Service to manage email verification tokens for project users.
      */
     private final IEmailVerificationTokenService emailVerificationTokenService;
 
     public SendVerificationEmailListener(ITemplateService templateService, IEmailService emailService,
-            IAccountsClient accountsClient, IEmailVerificationTokenService emailVerificationTokenService) {
+                                         IAccountsClient accountsClient, IStorageRestClient storageClient,
+                                         IRuntimeTenantResolver runtimeTenantResolver,
+                                         IEmailVerificationTokenService emailVerificationTokenService,
+            @Value("${regards.mails.noreply.address:regards@noreply.fr}") String noreply) {
         super();
         this.templateService = templateService;
         this.emailService = emailService;
         this.accountsClient = accountsClient;
+        this.storageClient = storageClient;
+        this.runtimeTenantResolver = runtimeTenantResolver;
         this.emailVerificationTokenService = emailVerificationTokenService;
+        this.noreply = noreply;
     }
 
     @Override
@@ -92,25 +109,9 @@ public class SendVerificationEmailListener implements ApplicationListener<OnGran
         }
 
         // Create a hash map in order to store the data to inject in the mail
-        Map<String, String> data = new HashMap<>();
-        // lets retrive the account
-        try {
-            FeignSecurityManager.asSystem();
-            ResponseEntity<EntityModel<Account>> accountResponse = accountsClient
-                    .retrieveAccounByEmail(projectUser.getEmail());
-            if (accountResponse.getStatusCode().is2xxSuccessful()) {
-                data.put("name", accountResponse.getBody().getContent().getFirstName());
-            } else {
-                LOGGER.error("Could not find the associated Account for templating the email content.");
-                data.put("name", "");
-            }
-        } catch (FeignException e) {
-            LOGGER.error("Could not find the associated Account for templating the email content.", e);
-            data.put("name", "");
-        } finally {
-            FeignSecurityManager.reset();
-        }
+        Map<String, Object> data = new HashMap<>();
 
+        data.put("project", runtimeTenantResolver.getTenant());
         String linkUrlTemplate;
         if (token.getRequestLink().contains("?")) {
             linkUrlTemplate = "%s&origin_url=%s&token=%s&account_email=%s";
@@ -122,6 +123,27 @@ public class SendVerificationEmailListener implements ApplicationListener<OnGran
                                                token.getToken(), userEmail);
         data.put("confirmationUrl", confirmationUrl);
 
+        // quota management: unlimited / not interesting while storage does not answer
+        data.put("quota", -1L);
+        data.put("rate", -1L);
+        try {
+            FeignSecurityManager.asSystem();
+            ResponseEntity<DownloadQuotaLimitsDto> storageResponse = storageClient.getQuotaLimits(userEmail);
+            if (storageResponse.getStatusCode().is2xxSuccessful()) {
+                DownloadQuotaLimitsDto quotaLimits = storageResponse.getBody();
+                data.put("quota", Optional.ofNullable(quotaLimits.getMaxQuota()).orElse(-1L));
+                data.put("rate", Optional.ofNullable(quotaLimits.getRateLimit()).orElse(-1L));
+            } else {
+                LOGGER.error("Could not find the associated quota limits for templating the email content.");
+            }
+        } catch (Exception e) {
+            LOGGER.debug("Could not add quota paragraph to the email content.", e);
+        } finally {
+            FeignSecurityManager.reset();
+        }
+
+
+
         String message;
         try {
             message = templateService.render(AccessRightTemplateConf.EMAIL_ACCOUNT_VALIDATION_TEMPLATE_NAME, data);
@@ -130,6 +152,6 @@ public class SendVerificationEmailListener implements ApplicationListener<OnGran
                         e);
             message = "Please click on the following link to confirm your registration: " + data.get("confirmationUrl");
         }
-        emailService.sendEmail(message, "[REGARDS] Account Confirmation", null, userEmail);
+        emailService.sendEmail(message, "[REGARDS] Account Confirmation", noreply, userEmail);
     }
 }
